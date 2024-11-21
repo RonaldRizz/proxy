@@ -1,0 +1,112 @@
+From 6522792903f1bb899f25c37785aa226c4fb86656 Mon Sep 17 00:00:00 2001
+From: Tian L <60599517+tian-lt@users.noreply.github.com>
+Date: Wed, 1 Jun 2022 14:27:25 +0800
+Subject: Add CMake configs and tests codebase (#2)
+
+* Add CMake configs and tests codebase
+
+* update ignore file and cmakefile
+
+* add an empty line
+
+* INTERFACE to PRIVATE
+
+* msft-proxy to msft_proxy
+
+* -Wall
+
+diff --git a/.gitignore b/.gitignore
+new file mode 100644
+index 0000000..a6b0a46
+--- /dev/null
++++ b/.gitignore
+@@ -0,0 +1,3 @@
++# Ignore build directories
++build/
++Testing/
+diff --git a/CMakeLists.txt b/CMakeLists.txt
+new file mode 100644
+index 0000000..5127a5a
+--- /dev/null
++++ b/CMakeLists.txt
+@@ -0,0 +1,20 @@
++cmake_minimum_required (VERSION 3.5)
++
++project(msft_proxy)
++add_library(msft_proxy INTERFACE)
++target_compile_features(msft_proxy INTERFACE cxx_std_20)
++target_include_directories(msft_proxy INTERFACE .)
++
++include(FetchContent)
++# gtest version release-1.11.0
++FetchContent_Declare(
++  googletest
++  URL https://github.com/google/googletest/archive/e2239ee6043f73722e7aa812a459f54a28552929.zip
++)
++
++set(gtest_force_shared_crt ON CACHE BOOL "" FORCE) # For Windows: Prevent overriding the parent project's compiler/linker settings
++set(BUILD_GMOCK OFF CACHE BOOL "" FORCE) # Disable GMock
++FetchContent_MakeAvailable(googletest)
++
++enable_testing()
++add_subdirectory(tests)
+diff --git a/README.md b/README.md
+index 5cd7cec..beccb78 100644
+--- a/README.md
++++ b/README.md
+@@ -10,6 +10,17 @@ As the maintainer of this project, please make a few updates:
+ - Understanding the security reporting process in SECURITY.MD
+ - Remove this section from the README
+ 
++## Build with CMake
++
++```
++git clone https://github.com/microsoft/proxy.git
++cd proxy
++cmake -S . -B build
++cmake --build ./build -j8
++cd ./build
++ctest -j8
++```
++
+ ## Contributing
+ 
+ This project welcomes contributions and suggestions.  Most contributions require you to agree to a
+diff --git a/tests/CMakeLists.txt b/tests/CMakeLists.txt
+new file mode 100644
+index 0000000..5022de4
+--- /dev/null
++++ b/tests/CMakeLists.txt
+@@ -0,0 +1,16 @@
++project(msft_proxy_tests)
++add_executable(msft_proxy_tests
++  DummyTests.cpp
++)
++target_compile_features(msft_proxy_tests PRIVATE cxx_std_20)
++target_link_libraries(msft_proxy_tests PRIVATE msft_proxy)
++target_link_libraries(msft_proxy_tests PRIVATE gtest_main)
++
++if (MSVC)
++  target_compile_options(msft_proxy_tests PRIVATE /W4 /WX)
++else()
++  target_compile_options(msft_proxy_tests PRIVATE -Wall -Wextra -Wpedantic -Werror)
++endif()
++
++include(GoogleTest)
++gtest_discover_tests(msft_proxy_tests)
+diff --git a/tests/DummyTests.cpp b/tests/DummyTests.cpp
+new file mode 100644
+index 0000000..d62c1b4
+--- /dev/null
++++ b/tests/DummyTests.cpp
+@@ -0,0 +1,10 @@
++// Copyright (c) Microsoft Corporation. All rights reserved.
++// Licensed under the MIT License.
++
++// Note: this is a fake test to set up the tests project.
++
++#include <gtest/gtest.h>
++
++TEST(DummyTests, TestMethod1) {
++  EXPECT_EQ(10 + 1, 11);
++}
