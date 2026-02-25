@@ -1,28 +1,29 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
+#include "utils.h"
 #include <gtest/gtest.h>
 #include <memory>
+#include <proxy/proxy.h>
 #include <typeinfo>
-#include "proxy.h"
-#include "utils.h"
 
 namespace proxy_reflection_tests_details {
 
 struct TraitsReflector {
- public:
+public:
   template <class T>
   constexpr explicit TraitsReflector(std::in_place_type_t<T>)
       : is_default_constructible_(std::is_default_constructible_v<T>),
         is_copy_constructible_(std::is_copy_constructible_v<T>),
         is_nothrow_move_constructible_(std::is_nothrow_move_constructible_v<T>),
         is_nothrow_destructible_(std::is_nothrow_destructible_v<T>),
-        is_trivial_(std::is_trivial_v<T>) {}
+        is_trivial_(std::is_trivially_default_constructible_v<T> &&
+                    std::is_trivially_copyable_v<T>) {}
 
-  template <class F, class R>
+  template <class Self, class R>
   struct accessor {
     const TraitsReflector& ReflectTraits() const noexcept {
-      return pro::proxy_reflect<R>(pro::access_proxy<F>(*this));
+      return pro::proxy_reflect<R>(static_cast<const Self&>(*this));
     }
   };
 
@@ -33,16 +34,16 @@ struct TraitsReflector {
   bool is_trivial_;
 };
 
-struct TestRttiFacade : pro::facade_builder
-    ::add_reflection<utils::RttiReflector>
-    ::add_direct_reflection<utils::RttiReflector>
-    ::build {};
+struct TestRttiFacade : pro::facade_builder                           //
+                        ::add_reflection<utils::RttiReflector>        //
+                        ::add_direct_reflection<utils::RttiReflector> //
+                        ::build {};
 
-struct TestTraitsFacade : pro::facade_builder
-    ::add_direct_reflection<TraitsReflector>
-    ::build {};
+struct TestTraitsFacade : pro::facade_builder                      //
+                          ::add_direct_reflection<TraitsReflector> //
+                          ::build {};
 
-}  // namespace proxy_reflection_tests_details
+} // namespace proxy_reflection_tests_details
 
 namespace details = proxy_reflection_tests_details;
 

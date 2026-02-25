@@ -1,60 +1,51 @@
 on:
   workflow_call:
-    inputs:
-      branch:
-        type: string
-        required: false
 
 jobs:
   bvt-clang:
     runs-on: ubuntu-24.04
     steps:
     - uses: actions/checkout@v4
-      with:
-        ref: ${{ inputs.branch }}
+
+    - name: install meson
+      run: pipx install meson
 
     - name: install clang
       run: |
-        sudo apt install -y clang-15 clang-16 clang-17 clang-18
+        curl https://apt.llvm.org/llvm.sh | sudo bash -s -- 21
+        sudo apt install -y clang-21 libc++-21-dev clang-format-21
+        cat <<'EOF' >> "$GITHUB_ENV"
+        CC=clang-21
+        CXX=clang++-21
+        CXXFLAGS=-stdlib=libc++
+        EOF
 
-    - name: check compiler versions
+    - name: check compiler version
       run: |
-        clang++-15 --version
-        clang++-16 --version
-        clang++-17 --version
-        clang++-18 --version
+        "$CXX" --version
 
-    - name: build and run test with clang 15
+    - name: build and run test with clang 21 on cmake
       run: |
-        cmake -B build-clang-15 -DCMAKE_C_COMPILER=clang-15 -DCMAKE_CXX_COMPILER=clang++-15 -DCMAKE_BUILD_TYPE=Release
-        cmake --build build-clang-15 -j
-        ctest --test-dir build-clang-15 -j
+        cmake -B build-cmake -GNinja -DCMAKE_CXX_STANDARD=23 -DCMAKE_BUILD_TYPE=Release -DPROXY_BUILD_MODULES=TRUE
+        mapfile -t FILES < <(find include tests benchmarks build-cmake/examples_from_docs tools -type f \( -name '*.h' -o -name '*.ixx' -o -name '*.cpp' \))
+        echo "Running clang-format on ${#FILES[@]} files: ${FILES[*]}"
+        clang-format-21 --dry-run --Werror "${FILES[@]}"
+        cmake --build build-cmake -j
+        ctest --test-dir build-cmake -j
+        mkdir build-cmake/drop
+        bash ./tools/dump_build_env.sh "$CXX" build-cmake/drop/env-info.json
 
-    - name: build and run test with clang 16
+    - name: build and run test with clang 21 on meson
       run: |
-        cmake -B build-clang-16 -DCMAKE_C_COMPILER=clang-16 -DCMAKE_CXX_COMPILER=clang++-16 -DCMAKE_BUILD_TYPE=Release
-        cmake --build build-clang-16 -j
-        ctest --test-dir build-clang-16 -j
-
-    - name: build and run test with clang 17
-      run: |
-        cmake -B build-clang-17 -DCMAKE_C_COMPILER=clang-17 -DCMAKE_CXX_COMPILER=clang++-17 -DCMAKE_BUILD_TYPE=Release
-        cmake --build build-clang-17 -j
-        ctest --test-dir build-clang-17 -j
-
-    - name: build and run test with clang 18
-      run: |
-        cmake -B build-clang-18 -DCMAKE_C_COMPILER=clang-18 -DCMAKE_CXX_COMPILER=clang++-18 -DCMAKE_BUILD_TYPE=Release
-        cmake --build build-clang-18 -j
-        ctest --test-dir build-clang-18 -j
+        meson setup build-meson --buildtype=release -Dtests=enabled -Dbenchmarks=enabled --force-fallback-for=fmt
+        meson test -C build-meson
+        meson test -C build-meson --benchmark --test-args=--benchmark_list_tests=true
 
     - name: run benchmarks
-      run: |
-        cd build-clang-18/benchmarks
-        ./msft_proxy_benchmarks --benchmark_min_warmup_time=0.1 --benchmark_min_time=0.1s --benchmark_repetitions=30 --benchmark_enable_random_interleaving=true --benchmark_report_aggregates_only=true --benchmark_format=json > benchmarking-results.json
+      run: build-cmake/benchmarks/msft_proxy_benchmarks --benchmark_min_warmup_time=0.1 --benchmark_min_time=0.1s --benchmark_repetitions=30 --benchmark_enable_random_interleaving=true --benchmark_report_aggregates_only=true --benchmark_format=json > build-cmake/drop/benchmarking-results.json
 
     - name: archive benchmarking results
       uses: actions/upload-artifact@v4
       with:
-        name: benchmarking-results-clang
-        path: build-clang-18/benchmarks/benchmarking-results.json
+        name: drop-clang
+        path: build-cmake/drop/

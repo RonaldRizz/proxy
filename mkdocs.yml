@@ -1,0 +1,52 @@
+---
+site_name: Proxy 4
+site_url: https://microsoft.github.io/proxy
+site_description: Next Generation Polymorphism in C++
+copyright: Copyright (c) Microsoft Corporation
+repo_url: https://github.com/microsoft/proxy/
+edit_uri: ""
+
+theme:
+  name: material
+  custom_dir: mkdocs/overrides
+  font: false
+  palette:
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: black
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  logo: resources/icon.png
+  favicon: resources/icon.png
+  features:
+    - navigation.instant
+    - navigation.indexes
+
+extra_css:
+  - resources/extra.css
+
+plugins:
+  - awesome-pages
+  - exclude:
+      glob:
+        - CMakeLists.txt
+  - git-revision-date-localized
+  - open-in-new-tab
+  - search
+
+markdown_extensions:
+  - admonition
+  - mdx_truly_sane_lists
+  - meta
+  - pymdownx.highlight
+  - pymdownx.pathconverter
+  - pymdownx.superfences
+  - pymdownx.tabbed
+  - pymdownx.tasklist

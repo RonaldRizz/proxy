@@ -1,61 +1,60 @@
 // Copyright (c) Microsoft Corporation.
 // Licensed under the MIT License.
 
-#include <gtest/gtest.h>
 #include <algorithm>
 #include <functional>
+#include <gtest/gtest.h>
+#include <iomanip>
 #include <list>
 #include <map>
 #include <ranges>
+#include <sstream>
 #include <string>
 #include <typeindex>
 #include <typeinfo>
 #include <vector>
 #if defined(_MSC_VER) && !defined(__clang__)
 #pragma warning(push)
-#pragma warning(disable: 4702)  // False alarm from MSVC: warning C4702: unreachable code
-#endif  // defined(_MSC_VER) && !defined(__clang__)
-#include "proxy.h"
+#pragma warning(                                                               \
+    disable : 4702) // False alarm from MSVC: warning C4702: unreachable code
+#endif              // defined(_MSC_VER) && !defined(__clang__)
+#include <proxy/proxy.h>
 #if defined(_MSC_VER) && !defined(__clang__)
 #pragma warning(pop)
-#endif  // defined(_MSC_VER) && !defined(__clang__)
+#endif // defined(_MSC_VER) && !defined(__clang__)
 #include "utils.h"
 
 namespace proxy_invocation_tests_details {
 
 template <class... Os>
-struct MovableCallable : pro::facade_builder
-    ::add_convention<pro::operator_dispatch<"()">, Os...>
-    ::build {};
+struct MovableCallable
+    : pro::facade_builder                                   //
+      ::add_convention<pro::operator_dispatch<"()">, Os...> //
+      ::build {};
 
 template <class... Os>
-struct Callable : pro::facade_builder
-    ::support_copy<pro::constraint_level::nontrivial>
-    ::add_facade<MovableCallable<Os...>>
-    ::build {};
+struct Callable : pro::facade_builder                               //
+                  ::support_copy<pro::constraint_level::nontrivial> //
+                  ::add_facade<MovableCallable<Os...>>              //
+                  ::build {};
 
-struct Wildcard {
-  template <class T>
-  operator T() const noexcept { std::terminate(); }
-};
-
-Wildcard NotImplemented(auto&&...) { throw std::runtime_error{ "Not implemented!" }; }
-
-PRO_DEF_WEAK_DISPATCH(WeakOpCall, pro::operator_dispatch<"()">, NotImplemented);
 template <class... Os>
-struct WeakCallable : pro::facade_builder
-    ::support_copy<pro::constraint_level::nontrivial>
-    ::add_convention<WeakOpCall, Os...>
-    ::build {};
+struct WeakCallable
+    : pro::facade_builder                               //
+      ::support_copy<pro::constraint_level::nontrivial> //
+      ::add_convention<pro::weak_dispatch<pro::operator_dispatch<"()">>,
+                       Os...> //
+      ::build {};
 
 PRO_DEF_FREE_DISPATCH(FreeSize, std::ranges::size, Size);
 PRO_DEF_FREE_DISPATCH(FreeForEach, std::ranges::for_each, ForEach);
 
 template <class T>
-struct Iterable : pro::facade_builder
-    ::add_convention<FreeForEach, void(std::function<void(T&)>)>
-    ::template add_convention<FreeSize, std::size_t() noexcept>
-    ::build {};
+struct Iterable
+    : pro::facade_builder                                          //
+      ::add_convention<FreeForEach, void(std::function<void(T&)>)> //
+      ::template add_convention<FreeSize, std::size_t() noexcept>  //
+      ::build {};
 
 template <class T>
 struct Container;
@@ -69,17 +68,26 @@ pro::proxy<Container<T>> AppendImpl(C& container, T&& v) {
 PRO_DEF_FREE_DISPATCH(FreeAppend, AppendImpl, Append);
 
 template <class T>
-struct Container : pro::facade_builder
-    ::add_facade<Iterable<T>>
-    ::template add_convention<FreeAppend, pro::proxy<Container<T>>(T) const&>
-    ::build {};
+struct FreeAppendOverloadTraits {
+  template <class F>
+  using Type = pro::proxy<F>(T) const&;
+};
+
+template <class T>
+struct Container
+    : pro::facade_builder       //
+      ::add_facade<Iterable<T>> //
+      ::template add_convention<
+          FreeAppend, pro::facade_aware_overload_t<
+                          FreeAppendOverloadTraits<T>::template Type>> //
+      ::build {};
 
 PRO_DEF_MEM_DISPATCH(MemAt, at, at);
-PRO_DEF_WEAK_DISPATCH(MemAtWeak, MemAt, NotImplemented);
 
-struct ResourceDictionary : pro::facade_builder
-    ::add_convention<MemAtWeak, std::string(int)>
-    ::build {};
+struct ResourceDictionary
+    : pro::facade_builder                                           //
+      ::add_convention<pro::weak_dispatch<MemAt>, std::string(int)> //
+      ::build {};
 
 template <class F, class T>
 pro::proxy<F> LockImpl(const std::weak_ptr<T>& p) {
@@ -93,48 +101,76 @@ template <class F>
 PRO_DEF_FREE_DISPATCH(FreeLock, LockImpl<F>, Lock);
 
 template <class F>
-struct Weak : pro::facade_builder
-    ::support_copy<pro::constraint_level::nontrivial>
-    ::add_convention<FreeLock<F>, pro::proxy<F>()>
-    ::build {};
+struct Weak : pro::facade_builder                               //
+              ::support_copy<pro::constraint_level::nontrivial> //
+              ::add_convention<FreeLock<F>, pro::proxy<F>()>    //
+              ::build {};
 
 template <class F, class T>
-auto GetWeakImpl(const std::shared_ptr<T>& p) { return pro::make_proxy<Weak<F>, std::weak_ptr<T>>(p); }
+pro::proxy<Weak<F>> GetWeakImpl(const std::shared_ptr<T>& p) {
+  return pro::make_proxy<Weak<F>, std::weak_ptr<T>>(p);
+}
+template <class F, class T>
+pro::proxy<Weak<F>> GetWeakImpl(T&&) {
+  return nullptr;
+}
 
 template <class F>
-PRO_DEF_FREE_DISPATCH(FreeGetWeakImpl, GetWeakImpl<F>, GetWeak);
-template <class F>
-PRO_DEF_WEAK_DISPATCH(FreeGetWeak, FreeGetWeakImpl<F>, std::nullptr_t);
+PRO_DEF_FREE_DISPATCH(FreeGetWeak, GetWeakImpl<F>, GetWeak);
 
-struct SharedStringable : pro::facade_builder
-    ::add_facade<utils::spec::Stringable>
-    ::add_direct_convention<FreeGetWeak<SharedStringable>, pro::proxy<Weak<SharedStringable>>() const&>
-    ::build {};
+template <class F>
+using FreeGetWeakOverload = pro::proxy<Weak<F>>() const&;
+
+struct SharedStringable
+    : pro::facade_builder                   //
+      ::add_facade<utils::spec::Stringable> //
+      ::add_direct_convention<
+          FreeGetWeak<SharedStringable>,
+          pro::facade_aware_overload_t<FreeGetWeakOverload>> //
+      ::build {};
 
 template <class F, bool NE, class... Args>
-concept CallableFacade =
-  requires(pro::proxy<F> p, Args... args) {
-    { (*p)(std::forward<Args>(args)...) };
-    typename std::enable_if_t<NE == noexcept((*p)(std::forward<Args>(args)...))>;
+concept CallableFacade = requires(pro::proxy<F> p, Args... args) {
+  { (*p)(std::forward<Args>(args)...) };
+  typename std::enable_if_t<NE == noexcept((*p)(std::forward<Args>(args)...))>;
 };
 
 // Static assertions for facade Callable
-static_assert(!CallableFacade<Callable<int(double)>, false, std::nullptr_t>);  // Wrong arguments
-static_assert(CallableFacade<Callable<int(double)>, false, float>);  // Invoking without specifying a dispatch
-static_assert(CallableFacade<Callable<int(double), void(int) noexcept>, true, int>);  // Invoking noexcept overloads
-static_assert(CallableFacade<Callable<int(double), void(int) noexcept>, false, double>);  // Invoking overloads that may throw
+static_assert(!CallableFacade<Callable<int(double)>, false,
+                              std::nullptr_t>); // Wrong arguments
+static_assert(CallableFacade<Callable<int(double)>, false,
+                             float>); // Invoking without specifying a dispatch
+static_assert(CallableFacade<Callable<int(double), void(int) noexcept>, true,
+                             int>); // Invoking noexcept overloads
+static_assert(CallableFacade<Callable<int(double), void(int) noexcept>, false,
+                             double>); // Invoking overloads that may throw
 
 template <class... Args>
-std::vector<std::type_index> GetTypeIndices()
-    { return {std::type_index{typeid(Args)}...}; }
+std::vector<std::type_index> GetTypeIndices() {
+  return {std::type_index{typeid(Args)}...};
+}
 
-}  // namespace proxy_invocation_tests_details
+template <class T>
+std::string Dump(T&& value) noexcept {
+  std::ostringstream out;
+  out << std::boolalpha << "is_const="
+      << std::is_const_v<std::remove_reference_t<T>> << ", is_ref="
+      << std::is_lvalue_reference_v<T> << ", value=" << value;
+  return std::move(out).str();
+}
+
+PRO_DEF_FREE_DISPATCH(FreeDump, Dump);
+
+PRO_DEF_FREE_DISPATCH(FreeInvoke, std::invoke, Invoke);
+PRO_DEF_FREE_AS_MEM_DISPATCH(MemInvoke, std::invoke, Invoke);
+
+} // namespace proxy_invocation_tests_details
 
 namespace details = proxy_invocation_tests_details;
 
 TEST(ProxyInvocationTests, TestArgumentForwarding) {
   std::string arg1 = "My string";
-  std::vector<int> arg2 = { 1, 2, 3 };
+  std::vector<int> arg2 = {1, 2, 3};
   std::vector<int> arg2_copy = arg2;
   std::string arg1_received;
   std::vector<int> arg2_received;
@@ -155,7 +191,7 @@ TEST(ProxyInvocationTests, TestArgumentForwarding) {
 
 TEST(ProxyInvocationTests, TestThrow) {
   const char* expected_error_message = "My exception";
-  auto f = [&] { throw std::runtime_error{ expected_error_message }; };
+  auto f = [&] { throw std::runtime_error{expected_error_message}; };
   bool exception_thrown = false;
   pro::proxy<details::Callable<void()>> p = &f;
   try {
@@ -169,7 +205,7 @@ TEST(ProxyInvocationTests, TestThrow) {
 }
 
 TEST(ProxyInvocationTests, TestMultipleDispatches_Unique) {
-  std::list<int> l = { 1, 2, 3 };
+  std::list<int> l = {1, 2, 3};
   pro::proxy<details::Iterable<int>> p = &l;
   ASSERT_EQ(Size(*p), 3);
   int sum = 0;
@@ -179,14 +215,18 @@ TEST(ProxyInvocationTests, TestMultipleDispatches_Unique) {
 }
 
 TEST(ProxyInvocationTests, TestMultipleDispatches_Duplicated) {
-  struct DuplicatedIterable : pro::facade_builder
-      ::add_convention<details::FreeForEach, void(std::function<void(int&)>)>
-      ::add_convention<details::FreeSize, std::size_t()>
-      ::add_convention<details::FreeForEach, void(std::function<void(int&)>)>
-      ::build {};
-  static_assert(sizeof(pro::details::facade_traits<DuplicatedIterable>::meta) ==
+  struct DuplicatedIterable
+      : pro::facade_builder //
+        ::add_convention<details::FreeForEach,
+                         void(std::function<void(int&)>)>  //
+        ::add_convention<details::FreeSize, std::size_t()> //
+        ::add_convention<details::FreeForEach,
+                         void(std::function<void(int&)>)> //
+        ::build {};
+  static_assert(
+      sizeof(pro::details::facade_traits<DuplicatedIterable>::meta) ==
       sizeof(pro::details::facade_traits<details::Iterable<int>>::meta));
-  std::list<int> l = { 1, 2, 3 };
+  std::list<int> l = {1, 2, 3};
   pro::proxy<DuplicatedIterable> p = &l;
   ASSERT_EQ(Size(*p), 3);
   int sum = 0;
@@ -196,7 +236,7 @@ TEST(ProxyInvocationTests, TestMultipleDispatches_Duplicated) {
 }
 
 TEST(ProxyInvocationTests, TestRecursiveDefinition) {
-  std::list<int> l = { 1, 2, 3 };
+  std::list<int> l = {1, 2, 3};
   pro::proxy<details::Container<int>> p = &l;
   ASSERT_EQ(Size(*p), 3);
   int sum = 0;
@@ -210,13 +250,17 @@ TEST(ProxyInvocationTests, TestRecursiveDefinition) {
   ASSERT_EQ(sum, 21);
 }
 
-TEST(ProxyInvocationTests, TestOverloadResolution) {
-  struct OverloadedCallable : pro::facade_builder
-      ::add_convention<pro::operator_dispatch<"()">, void(int), void(double), void(const char*), void(char*), void(std::string, int)>
-      ::build {};
+TEST(ProxyInvocationTests, TestOverloadResolution_Member) {
+  struct OverloadedCallable
+      : pro::facade_builder //
+        ::add_convention<pro::operator_dispatch<"()">, void(int), void(double),
+                         void(const char*), void(char*),
+                         void(std::string, int)> //
+        ::build {};
   std::vector<std::type_index> side_effect;
-  auto p = pro::make_proxy<OverloadedCallable>([&](auto&&... args)
-      { side_effect = details::GetTypeIndices<std::decay_t<decltype(args)>...>(); });
+  auto p = pro::make_proxy<OverloadedCallable>([&](auto&&... args) {
+    side_effect = details::GetTypeIndices<std::decay_t<decltype(args)>...>();
+  });
   (*p)(123);
   ASSERT_EQ(side_effect, details::GetTypeIndices<int>());
   (*p)(1.23);
@@ -231,10 +275,61 @@ TEST(ProxyInvocationTests, TestOverloadResolution) {
   ASSERT_FALSE((std::is_invocable_v<decltype(*p), std::vector<int>>));
 }
 
+TEST(ProxyInvocationTests, TestOverloadResolution_Free) {
+  struct OverloadedCallable
+      : pro::facade_builder //
+        ::add_convention<details::FreeInvoke, void(int), void(double),
+                         void(const char*), void(char*),
+                         void(std::string, int)> //
+        ::build {};
+  std::vector<std::type_index> side_effect;
+  auto p = pro::make_proxy<OverloadedCallable>([&](auto&&... args) {
+    side_effect = details::GetTypeIndices<std::decay_t<decltype(args)>...>();
+  });
+  Invoke(*p, 123);
+  ASSERT_EQ(side_effect, details::GetTypeIndices<int>());
+  Invoke(*p, 1.23);
+  ASSERT_EQ(side_effect, details::GetTypeIndices<double>());
+  char foo[2];
+  Invoke(*p, foo);
+  ASSERT_EQ(side_effect, details::GetTypeIndices<char*>());
+  Invoke(*p, "lalala");
+  ASSERT_EQ(side_effect, details::GetTypeIndices<const char*>());
+  Invoke(*p, "lalala", 0);
+  ASSERT_EQ(side_effect, (details::GetTypeIndices<std::string, int>()));
+}
+
+TEST(ProxyInvocationTests, TestOverloadResolution_FreeAsMem) {
+  struct OverloadedInvocable
+      : pro::facade_builder //
+        ::add_convention<details::MemInvoke, void(int), void(double),
+                         void(const char*), void(char*),
+                         void(std::string, int)> //
+        ::build {};
+  std::vector<std::type_index> side_effect;
+  auto p = pro::make_proxy<OverloadedInvocable>([&](auto&&... args) {
+    side_effect = details::GetTypeIndices<std::decay_t<decltype(args)>...>();
+  });
+  p->Invoke(123);
+  ASSERT_EQ(side_effect, details::GetTypeIndices<int>());
+  p->Invoke(1.23);
+  ASSERT_EQ(side_effect, details::GetTypeIndices<double>());
+  char foo[2];
+  p->Invoke(foo);
+  ASSERT_EQ(side_effect, details::GetTypeIndices<char*>());
+  p->Invoke("lalala");
+  ASSERT_EQ(side_effect, details::GetTypeIndices<const char*>());
+  p->Invoke("lalala", 0);
+  ASSERT_EQ(side_effect, (details::GetTypeIndices<std::string, int>()));
+}
+
 TEST(ProxyInvocationTests, TestNoexcept) {
   std::vector<std::type_index> side_effect;
-  auto p = pro::make_proxy<details::Callable<void(int) noexcept, void(double)>>([&](auto&&... args) noexcept
-    { side_effect = details::GetTypeIndices<std::decay_t<decltype(args)>...>(); });
+  auto p = pro::make_proxy<details::Callable<void(int) noexcept, void(double)>>(
+      [&](auto&&... args) noexcept {
+        side_effect =
+            details::GetTypeIndices<std::decay_t<decltype(args)>...>();
+      });
   static_assert(noexcept((*p)(123)));
   (*p)(123);
   ASSERT_EQ(side_effect, details::GetTypeIndices<int>());
@@ -246,14 +341,14 @@ TEST(ProxyInvocationTests, TestNoexcept) {
 
 TEST(ProxyInvocationTests, TestFunctionPointer) {
   struct TestFacade : details::Callable<std::vector<std::type_index>()> {};
-  pro::proxy<TestFacade> p{ &details::GetTypeIndices<int, double> };
+  pro::proxy<TestFacade> p{&details::GetTypeIndices<int, double>};
   auto ret = (*p)();
   ASSERT_EQ(ret, (details::GetTypeIndices<int, double>()));
 }
 
 TEST(ProxyInvocationTests, TestMemberDispatchDefault) {
-  std::vector<std::string> container1{ "hello", "world", "!"};
-  std::list<std::string> container2{ "hello", "world" };
+  std::vector<std::string> container1{"hello", "world", "!"};
+  std::list<std::string> container2{"hello", "world"};
   pro::proxy<details::ResourceDictionary> p = &container1;
   ASSERT_EQ(p->at(0), "hello");
   p = &container2;
@@ -261,9 +356,8 @@ TEST(ProxyInvocationTests, TestMemberDispatchDefault) {
     bool exception_thrown = false;
     try {
       p->at(0);
-    } catch (const std::runtime_error& e) {
+    } catch (const pro::not_implemented&) {
       exception_thrown = true;
-      ASSERT_EQ(static_cast<std::string>(e.what()), "Not implemented!");
     }
     ASSERT_TRUE(exception_thrown);
   }
@@ -272,7 +366,8 @@ TEST(ProxyInvocationTests, TestMemberDispatchDefault) {
 TEST(ProxyInvocationTests, TestFreeDispatchDefault) {
   {
     int side_effect = 0;
-    auto p = pro::make_proxy<details::WeakCallable<void()>>([&] { side_effect = 1; });
+    auto p = pro::make_proxy<details::WeakCallable<void()>>(
+        [&] { side_effect = 1; });
     (*p)();
     ASSERT_EQ(side_effect, 1);
   }
@@ -281,9 +376,8 @@ TEST(ProxyInvocationTests, TestFreeDispatchDefault) {
     auto p = pro::make_proxy<details::WeakCallable<void()>>(123);
     try {
       (*p)();
-    } catch (const std::runtime_error& e) {
+    } catch (const pro::not_implemented&) {
       exception_thrown = true;
-      ASSERT_EQ(static_cast<std::string>(e.what()), "Not implemented!");
     }
     ASSERT_TRUE(exception_thrown);
   }
@@ -299,20 +393,22 @@ TEST(ProxyInvocationTests, TestObserverDispatch) {
     ASSERT_TRUE(locked.has_value());
     ASSERT_EQ(ToString(*locked), "123");
   }
-  p = &test_val;  // The underlying std::shared_ptr will be destroyed
+  p = &test_val; // The underlying std::shared_ptr will be destroyed
   ASSERT_TRUE(weak.has_value());
   ASSERT_FALSE(Lock(*weak).has_value());
   ASSERT_FALSE(GetWeak(p).has_value());
   ASSERT_EQ(ToString(*p), "123");
 }
 
-TEST(ProxyInvocationTests, TestQualifiedConvention) {
-  struct TestFacade : pro::facade_builder
-      ::add_convention<pro::operator_dispatch<"()">, int()&, int() const&, int() && noexcept, int() const&&>
-      ::build {};
+TEST(ProxyInvocationTests, TestQualifiedConvention_Member) {
+  struct TestFacade
+      : pro::facade_builder //
+        ::add_convention<pro::operator_dispatch<"()">, int() &, int() const&,
+                         int() && noexcept, int() const&&> //
+        ::build {};
 
   struct TestCallable {
-    int operator()()& noexcept { return 0; }
+    int operator()() & noexcept { return 0; }
     int operator()() const& noexcept { return 1; }
     int operator()() && noexcept { return 2; }
     int operator()() const&& noexcept { return 3; }
@@ -324,5 +420,25 @@ TEST(ProxyInvocationTests, TestQualifiedConvention) {
   ASSERT_EQ((*p)(), 0);
   ASSERT_EQ((*std::as_const(p))(), 1);
   ASSERT_EQ((*std::move(p))(), 2);
+  p = pro::make_proxy<TestFacade, TestCallable>();
   ASSERT_EQ((*std::move(std::as_const(p)))(), 3);
+}
+
+TEST(ProxyInvocationTests, TestQualifiedConvention_Free) {
+  struct TestFacade
+      : pro::facade_builder //
+        ::add_convention<details::FreeDump, std::string() &,
+                         std::string() const&, std::string() && noexcept,
+                         std::string() const&&> //
+        ::build {};
+
+  pro::proxy<TestFacade> p = pro::make_proxy<TestFacade>(123);
+  static_assert(!noexcept(Dump(*p)));
+  static_assert(noexcept(Dump(*std::move(p))));
+  ASSERT_EQ(Dump(*p), "is_const=false, is_ref=true, value=123");
+  ASSERT_EQ(Dump(*std::as_const(p)), "is_const=true, is_ref=true, value=123");
+  ASSERT_EQ(Dump(*std::move(p)), "is_const=false, is_ref=false, value=123");
+  p = pro::make_proxy<TestFacade>(123);
+  ASSERT_EQ(Dump(*std::move(std::as_const(p))),
+            "is_const=true, is_ref=false, value=123");
 }

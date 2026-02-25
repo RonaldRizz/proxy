@@ -1,0 +1,49 @@
+on:
+  workflow_call:
+
+jobs:
+  bvt-compatibility:
+    runs-on: ubuntu-24.04
+    strategy:
+      fail-fast: false
+      matrix:
+        compiler:
+          - {family: gcc, version: 13, modules: false}
+          - {family: gcc, version: 14, modules: true}
+          - {family: clang, version: 16, modules: false}
+          - {family: clang, version: 17, modules: false}
+          - {family: clang, version: 18, modules: false}
+          - {family: clang, version: 19, modules: false}
+          - {family: clang, version: 20, modules: true}
+
+    steps:
+    - uses: actions/checkout@v4
+
+    - name: install gcc
+      if: ${{ matrix.compiler.family == 'gcc' }}
+      run: |
+        sudo apt install -y 'g++-${{ matrix.compiler.version }}'
+        cat <<'EOF' >> "$GITHUB_ENV"
+        CC=gcc-${{ matrix.compiler.version }}
+        CXX=g++-${{ matrix.compiler.version }}
+        EOF
+
+    - name: install clang
+      if: ${{ matrix.compiler.family == 'clang' }}
+      run: |
+        sudo apt install -y 'clang-${{ matrix.compiler.version }}' 'clang-tools-${{ matrix.compiler.version }}' 'libc++-${{ matrix.compiler.version }}-dev' 'libc++abi-${{ matrix.compiler.version }}-dev'
+        cat <<'EOF' >> "$GITHUB_ENV"
+        CC=clang-${{ matrix.compiler.version }}
+        CXX=clang++-${{ matrix.compiler.version }}
+        CXXFLAGS=-stdlib=libc++
+        EOF
+
+    - name: check compiler version
+      run: |
+        "$CXX" --version
+
+    - name: build and run test with cmake
+      run: |
+        cmake -B build -GNinja -DCMAKE_BUILD_TYPE=Release '-DPROXY_BUILD_MODULES=${{ matrix.compiler.modules }}'
+        cmake --build build -j
+        ctest --test-dir build -j
